@@ -62,9 +62,13 @@ class PhotoClusterer:
         # Normalize features
         features_normalized = self.scaler.fit_transform(features)
         
-        # Apply K-means clustering
-        kmeans = KMeans(n_clusters=actual_clusters, random_state=42, n_init=10)
-        cluster_labels = kmeans.fit_predict(features_normalized)
+        # Apply K-means clustering (handle single cluster case)
+        if actual_clusters == 1:
+            # Special case: assign all photos to cluster 0
+            cluster_labels = np.zeros(len(photo_data), dtype=int)
+        else:
+            kmeans = KMeans(n_clusters=actual_clusters, random_state=42, n_init=10)
+            cluster_labels = kmeans.fit_predict(features_normalized)
         
         # Generate cluster descriptions
         cluster_descriptions = self._generate_cluster_descriptions(
@@ -158,8 +162,13 @@ class PhotoClusterer:
         features, feature_names = self._extract_features(photo_data)
         
         if features.size == 0:
-            self.logger.warning("No features available for optimal cluster determination, defaulting to 2")
-            return 2
+            self.logger.warning("No features available for optimal cluster determination, defaulting to 1")
+            return 1
+        
+        # Special case: if we have only 1 photo, return 1 cluster
+        if len(photo_data) == 1:
+            self.logger.info("Only 1 photo found, using 1 cluster")
+            return 1
         
         # Normalize features
         features_normalized = self.scaler.fit_transform(features)
@@ -169,8 +178,8 @@ class PhotoClusterer:
         min_k = 2
         
         if max_k < min_k:
-            self.logger.warning(f"Too few photos ({len(photo_data)}) for clustering analysis, using 2 clusters")
-            return 2
+            self.logger.warning(f"Too few photos ({len(photo_data)}) for clustering analysis, using 1 cluster")
+            return 1
         
         best_score = -1
         best_k = min_k
