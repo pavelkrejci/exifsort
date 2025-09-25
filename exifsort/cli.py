@@ -17,10 +17,11 @@ from .organizer import PhotoOrganizer
 @click.command()
 @click.argument('source_folder', type=click.Path(exists=True, file_okay=False, dir_okay=True))
 @click.argument('output_folder', type=click.Path(file_okay=False, dir_okay=True))
-@click.option('--clusters', '-c', default=5, help='Number of clusters for K-means (default: 5)')
+@click.option('--clusters', '-c', default=None, type=int, help='Number of clusters for K-means (default: auto-determine)')
+@click.option('--max-clusters', default=10, type=int, help='Maximum clusters when auto-determining (default: 10)')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose logging')
 @click.option('--dry-run', is_flag=True, help='Show what would be done without creating files')
-def main(source_folder, output_folder, clusters, verbose, dry_run):
+def main(source_folder, output_folder, clusters, max_clusters, verbose, dry_run):
     """
     Cluster photos based on EXIF data and organize them into folders with symlinks.
     
@@ -39,7 +40,10 @@ def main(source_folder, output_folder, clusters, verbose, dry_run):
         
         logger.info(f"Scanning photos in: {source_path}")
         logger.info(f"Output folder: {output_path}")
-        logger.info(f"Number of clusters: {clusters}")
+        if clusters is None:
+            logger.info(f"Clusters: auto-determine (max: {max_clusters})")
+        else:
+            logger.info(f"Number of clusters: {clusters}")
         
         if dry_run:
             logger.info("DRY RUN MODE - No files will be created")
@@ -55,7 +59,7 @@ def main(source_folder, output_folder, clusters, verbose, dry_run):
         logger.info(f"Found {len(photo_data)} photos with EXIF data")
         
         # Step 2: Cluster photos based on EXIF properties
-        clusterer = PhotoClusterer(n_clusters=clusters)
+        clusterer = PhotoClusterer(n_clusters=clusters, max_clusters=max_clusters)
         clustered_data = clusterer.cluster_photos(photo_data)
         
         # Step 3: Organize photos into folders with symlinks
