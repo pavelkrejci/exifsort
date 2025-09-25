@@ -4,18 +4,20 @@ Photo clustering using K-means algorithm based on EXIF properties.
 
 import logging
 from datetime import datetime
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 import numpy as np
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.decomposition import PCA
+from sklearn.metrics import silhouette_score
 
 
 class PhotoClusterer:
     """Cluster photos based on EXIF properties using K-means algorithm."""
     
-    def __init__(self, n_clusters: int = 5):
-        self.n_clusters = n_clusters
+    def __init__(self, n_clusters: Optional[int] = None, max_clusters: int = 10):
+        self.n_clusters = n_clusters  # None means progressive/dynamic clustering
+        self.max_clusters = max_clusters
         self.logger = logging.getLogger(__name__)
         self.scaler = StandardScaler()
         self.label_encoders = {}
@@ -30,9 +32,17 @@ class PhotoClusterer:
         Returns:
             List of photo data with cluster assignments
         """
-        if len(photo_data) < self.n_clusters:
-            self.logger.warning(f"Number of photos ({len(photo_data)}) is less than clusters ({self.n_clusters})")
-            self.n_clusters = min(len(photo_data), 2)
+        # Determine the number of clusters
+        if self.n_clusters is None:
+            # Progressive clustering - determine optimal number dynamically
+            optimal_clusters = self._determine_optimal_clusters(photo_data)
+            actual_clusters = optimal_clusters
+        else:
+            # Fixed clustering - use specified number
+            actual_clusters = self.n_clusters
+            if len(photo_data) < actual_clusters:
+                self.logger.warning(f"Number of photos ({len(photo_data)}) is less than clusters ({actual_clusters})")
+                actual_clusters = min(len(photo_data), 2)
         
         # Extract features for clustering
         features, feature_names = self._extract_features(photo_data)
@@ -47,17 +57,22 @@ class PhotoClusterer:
         
         self.logger.info(f"Extracted {features.shape[1]} features from {len(photo_data)} photos")
         self.logger.debug(f"Feature names: {feature_names}")
+        self.logger.info(f"Using {actual_clusters} clusters")
         
         # Normalize features
         features_normalized = self.scaler.fit_transform(features)
         
-        # Apply K-means clustering
-        kmeans = KMeans(n_clusters=self.n_clusters, random_state=42, n_init=10)
-        cluster_labels = kmeans.fit_predict(features_normalized)
+        # Apply K-means clustering (handle single cluster case)
+        if actual_clusters == 1:
+            # Special case: assign all photos to cluster 0
+            cluster_labels = np.zeros(len(photo_data), dtype=int)
+        else:
+            kmeans = KMeans(n_clusters=actual_clusters, random_state=42, n_init=10)
+            cluster_labels = kmeans.fit_predict(features_normalized)
         
         # Generate cluster descriptions
         cluster_descriptions = self._generate_cluster_descriptions(
-            photo_data, cluster_labels, features, feature_names
+            photo_data, cluster_labels, features, feature_names, actual_clusters
         )
         
         # Assign cluster information to photos
@@ -101,7 +116,7 @@ class PhotoClusterer:
         # Add datetime features if available
         has_datetime = any('datetime' in photo['exif'] for photo in photo_data)
         if has_datetime:
-            feature_names.extend(['year', 'month', 'day', 'hour'])
+            feature_names.extend(['days_since_epoch', 'hour'])
         
         # Extract features for each photo
         for photo in photo_data:
@@ -128,9 +143,12 @@ class PhotoClusterer:
             if has_datetime:
                 if 'datetime' in exif:
                     dt = exif['datetime']
-                    photo_features.extend([dt.year, dt.month, dt.day, dt.hour])
+                    # Calculate days since epoch for better granularity
+                    epoch = datetime(1970, 1, 1)
+                    days_since_epoch = (dt.date() - epoch.date()).days
+                    photo_features.extend([days_since_epoch, dt.hour])
                 else:
-                    photo_features.extend([0, 0, 0, 0])  # Missing values
+                    photo_features.extend([0, 0])  # Missing values
             
             features_list.append(photo_features)
         
@@ -139,17 +157,67 @@ class PhotoClusterer:
         
         return np.array(features_list), feature_names
     
+    def _determine_optimal_clusters(self, photo_data: List[Dict[str, Any]]) -> int:
+        """Determine optimal number of clusters using silhouette analysis."""
+        features, feature_names = self._extract_features(photo_data)
+        
+        if features.size == 0:
+            self.logger.warning("No features available for optimal cluster determination, defaulting to 1")
+            return 1
+        
+        # Special case: if we have only 1 photo, return 1 cluster
+        if len(photo_data) == 1:
+            self.logger.info("Only 1 photo found, using 1 cluster")
+            return 1
+        
+        # Normalize features
+        features_normalized = self.scaler.fit_transform(features)
+        
+        # Try different numbers of clusters (from 2 to max_clusters or number of photos, whichever is smaller)
+        max_k = min(self.max_clusters, len(photo_data) - 1, 8)  # Cap at 8 for performance
+        min_k = 2
+        
+        if max_k < min_k:
+            self.logger.warning(f"Too few photos ({len(photo_data)}) for clustering analysis, using 1 cluster")
+            return 1
+        
+        best_score = -1
+        best_k = min_k
+        
+        self.logger.info(f"Determining optimal clusters by evaluating {min_k} to {max_k} clusters")
+        
+        for k in range(min_k, max_k + 1):
+            try:
+                kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+                cluster_labels = kmeans.fit_predict(features_normalized)
+                
+                # Calculate silhouette score
+                score = silhouette_score(features_normalized, cluster_labels)
+                self.logger.debug(f"K={k}: Silhouette score = {score:.3f}")
+                
+                if score > best_score:
+                    best_score = score
+                    best_k = k
+                    
+            except Exception as e:
+                self.logger.warning(f"Failed to evaluate {k} clusters: {e}")
+                continue
+        
+        self.logger.info(f"Optimal number of clusters: {best_k} (silhouette score: {best_score:.3f})")
+        return best_k
+    
     def _generate_cluster_descriptions(
         self, 
         photo_data: List[Dict[str, Any]], 
         cluster_labels: np.ndarray,
         features: np.ndarray,
-        feature_names: List[str]
+        feature_names: List[str],
+        n_clusters: int
     ) -> Dict[int, str]:
         """Generate descriptive labels for each cluster."""
         cluster_descriptions = {}
         
-        for cluster_id in range(self.n_clusters):
+        for cluster_id in range(n_clusters):
             cluster_indices = np.where(cluster_labels == cluster_id)[0]
             cluster_photos = [photo_data[i] for i in cluster_indices]
             
@@ -173,14 +241,23 @@ class PhotoClusterer:
                     model_clean = most_common_model.replace(' ', '_').replace('/', '_')
                     characteristics.append(f"camera_{model_clean}")
             
-            # Time period analysis
+            # Time period analysis - use day-level granularity
             datetimes = [photo['exif'].get('datetime') for photo in cluster_photos]
             datetimes = [dt for dt in datetimes if dt]
             if datetimes:
-                years = [dt.year for dt in datetimes]
-                most_common_year = max(set(years), key=years.count)
-                if years.count(most_common_year) > len(cluster_photos) * 0.5:
-                    characteristics.append(f"year_{most_common_year}")
+                # Group by date (day level)
+                dates = [dt.date() for dt in datetimes]
+                most_common_date = max(set(dates), key=dates.count)
+                if dates.count(most_common_date) > len(cluster_photos) * 0.5:
+                    date_str = most_common_date.strftime("%Y_%m_%d")
+                    characteristics.append(f"date_{date_str}")
+                else:
+                    # If no single date dominates, try to find the most common month
+                    months = [(dt.year, dt.month) for dt in datetimes]
+                    most_common_month = max(set(months), key=months.count)
+                    if months.count(most_common_month) > len(cluster_photos) * 0.3:
+                        year, month = most_common_month
+                        characteristics.append(f"month_{year}_{month:02d}")
             
             # Generate cluster label
             if characteristics:
