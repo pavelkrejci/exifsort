@@ -95,6 +95,19 @@ class ExifExtractor:
                 if model:
                     extracted['model'] = model
                 
+                # Image dimensions for size classification
+                try:
+                    width = img.width
+                    height = img.height
+                    if width and height:
+                        extracted['width'] = width
+                        extracted['height'] = height
+                        # Calculate total pixels for size classification
+                        total_pixels = width * height
+                        extracted['total_pixels'] = total_pixels
+                except Exception as e:
+                    self.logger.debug(f"Could not extract image dimensions: {e}")
+                
                 # Only return if we have at least one useful property
                 return extracted if extracted else None
                 

@@ -10,23 +10,21 @@ from pathlib import Path
 import click
 
 from .exif_extractor import ExifExtractor
-from .clusterer import PhotoClusterer
+from .hierarchical_sorter import PhotoHierarchicalSorter
 from .organizer import PhotoOrganizer
 
 
 @click.command()
 @click.argument('source_folder', type=click.Path(exists=True, file_okay=False, dir_okay=True))
 @click.argument('output_folder', type=click.Path(file_okay=False, dir_okay=True))
-@click.option('--clusters', '-c', default=None, type=int, help='Number of clusters for K-means (default: auto-determine)')
-@click.option('--max-clusters', default=10, type=int, help='Maximum clusters when auto-determining (default: 10)')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose logging')
 @click.option('--dry-run', is_flag=True, help='Show what would be done without creating files')
-def main(source_folder, output_folder, clusters, max_clusters, verbose, dry_run):
+def main(source_folder, output_folder, verbose, dry_run):
     """
-    Cluster photos based on EXIF data and organize them into folders with symlinks.
+    Sort photos hierarchically based on EXIF data and organize them into folders with symlinks.
     
-    SOURCE_FOLDER: Path to folder containing photos to cluster
-    OUTPUT_FOLDER: Path where clustered folder structure will be created
+    SOURCE_FOLDER: Path to folder containing photos to sort
+    OUTPUT_FOLDER: Path where hierarchical folder structure will be created
     """
     # Setup logging
     log_level = logging.DEBUG if verbose else logging.INFO
@@ -40,10 +38,6 @@ def main(source_folder, output_folder, clusters, max_clusters, verbose, dry_run)
         
         logger.info(f"Scanning photos in: {source_path}")
         logger.info(f"Output folder: {output_path}")
-        if clusters is None:
-            logger.info(f"Clusters: auto-determine (max: {max_clusters})")
-        else:
-            logger.info(f"Number of clusters: {clusters}")
         
         if dry_run:
             logger.info("DRY RUN MODE - No files will be created")
@@ -58,15 +52,15 @@ def main(source_folder, output_folder, clusters, max_clusters, verbose, dry_run)
         
         logger.info(f"Found {len(photo_data)} photos with EXIF data")
         
-        # Step 2: Cluster photos based on EXIF properties
-        clusterer = PhotoClusterer(n_clusters=clusters, max_clusters=max_clusters)
-        clustered_data = clusterer.cluster_photos(photo_data)
+        # Step 2: Sort photos hierarchically based on EXIF properties
+        sorter = PhotoHierarchicalSorter()
+        sorted_data = sorter.sort_photos(photo_data)
         
         # Step 3: Organize photos into folders with symlinks
         organizer = PhotoOrganizer(output_path, dry_run=dry_run)
-        organizer.organize_photos(clustered_data)
+        organizer.organize_photos(sorted_data)
         
-        logger.info("Photo clustering and organization completed successfully!")
+        logger.info("Photo hierarchical sorting and organization completed successfully!")
         
     except Exception as e:
         logger.error(f"Error: {e}")
